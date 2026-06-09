@@ -1,0 +1,25 @@
+name: Trade
+version: '1.0-SNAPSHOT'
+main: hhl.trade.Trade
+api-version: '1.21'
+authors:
+  - TradePlugin
+
+description: A trade system plugin for Minecraft
+
+commands:
+  trade:
+    description: Open trade system
+    usage: /trade [open|edit|list|reload|help]
+    permission: trade.use
+    aliases:
+      - t
+      - exchange
+
+permissions:
+  trade.use:
+    description: Allow using trade commands
+    default: true
+  trade.admin:
+    description: Admin permission to edit recipes
+    default: op

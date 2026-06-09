@@ -1,0 +1,14 @@
+id: example_trade_1
+input:
+  '0':
+    material: DIRT
+    amount: 1
+output:
+  '0':
+    material: DIAMOND
+    amount: 1
+  '1':
+    material: IRON_INGOT
+    amount: 1
+refresh:
+  type: DAILY
