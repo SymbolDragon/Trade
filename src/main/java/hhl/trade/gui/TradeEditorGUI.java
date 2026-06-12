@@ -140,6 +140,12 @@ public class TradeEditorGUI implements Listener {
         
         // 设置成功提示按钮（第52格）
         inventory.setItem(52, createSetSuccessMessageButton(recipe));
+        
+        // 设置最大兑换次数按钮（第50格）
+        inventory.setItem(50, createSetMaxTradeCountButton(recipe));
+        
+        // 设置次数重置方式按钮（第51格）
+        inventory.setItem(51, createSetResetModeButton(recipe));
     }
     
     /**
@@ -192,8 +198,8 @@ public class TradeEditorGUI implements Listener {
             14, 15, 16, 17,
             23, 24, 25, 26,
             32, 33, 34, 35,
-            41, 42, 43, 44,
-            50, 51, 52
+            41, 42, 43, 44
+            // 注意：50, 51, 52, 53 是按钮区域，不作为物品槽
         };
         return index < rightSlots.length ? rightSlots[index] : -1;
     }
@@ -360,6 +366,74 @@ public class TradeEditorGUI implements Listener {
         return item;
     }
     
+    /**
+     * 创建设置最大兑换次数按钮
+     */
+    private ItemStack createSetMaxTradeCountButton(TradeRecipe recipe) {
+        Material material = recipe.getMaxTradeCount() > 0 ? Material.PAPER : Material.BOOK;
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName("§d§l设置兑换次数限制");
+            List<String> lore;
+            if (recipe.getMaxTradeCount() > 0) {
+                lore = Arrays.asList(
+                    "§7当前: §e" + recipe.getMaxTradeCount() + "次",
+                    "",
+                    "§7左键增加次数 (+1)",
+                    "§7Shift+左键大幅增加 (+10)",
+                    "§7右键减少次数 (-1)",
+                    "§7Shift+右键设置为无限制"
+                );
+            } else {
+                lore = Arrays.asList(
+                    "§7当前: §a无限制",
+                    "",
+                    "§7左键设置次数 (默认为10)",
+                    "§7右键保持无限制"
+                );
+            }
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+    
+    /**
+     * 创建设置次数重置方式按钮
+     */
+    private ItemStack createSetResetModeButton(TradeRecipe recipe) {
+        Material material = recipe.isCountResetsWithRefresh() ? Material.CLOCK : Material.BARRIER;
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName("§d§l次数重置方式");
+            List<String> lore;
+            if (recipe.isCountResetsWithRefresh()) {
+                lore = Arrays.asList(
+                    "§7当前: §e随刷新重置",
+                    "",
+                    "§7每次时间刷新时，次数会重置",
+                    "§7例如：每日配方每天0点重置次数",
+                    "",
+                    "§7左键切换为永久累计"
+                );
+            } else {
+                lore = Arrays.asList(
+                    "§7当前: §e永久累计",
+                    "",
+                    "§7次数不会随时间刷新重置",
+                    "§7直到达到最大次数为止",
+                    "",
+                    "§7左键切换为随刷新重置"
+                );
+            }
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+    
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!event.getView().getTitle().equals(EDITOR_TITLE)) {
@@ -510,6 +584,70 @@ public class TradeEditorGUI implements Listener {
             return;
         }
         
+        // 设置最大兑换次数按钮
+        if (slot == 50) {
+            event.setCancelled(true);
+            
+            // 先更新当前数据
+            updateRecipeFromInventory(player, recipe, isInputMode);
+            
+            if (event.isShiftClick() && event.isRightClick()) {
+                // Shift+右键：设置为无限制
+                recipe.setMaxTradeCount(0);
+                player.sendMessage("§a兑换次数限制已设置为无限制");
+            } else if (event.isShiftClick() && event.isLeftClick()) {
+                // Shift+左键：大幅增加 (+10)
+                int current = recipe.getMaxTradeCount();
+                recipe.setMaxTradeCount(current + 10);
+                player.sendMessage("§a兑换次数增加10次，现在是 " + recipe.getMaxTradeCount() + " 次");
+            } else if (event.isRightClick()) {
+                // 右键：减少次数 (-1)
+                int current = recipe.getMaxTradeCount();
+                if (current > 0) {
+                    recipe.setMaxTradeCount(current - 1);
+                    player.sendMessage("§a兑换次数减少1次，现在是 " + recipe.getMaxTradeCount() + " 次");
+                } else {
+                    player.sendMessage("§c已经是无限制状态");
+                }
+            } else {
+                // 左键：增加次数 (+1) 或设置为10
+                int current = recipe.getMaxTradeCount();
+                if (current == 0) {
+                    recipe.setMaxTradeCount(10); // 默认设置为10
+                    player.sendMessage("§a兑换次数限制已设置为 10 次");
+                } else {
+                    recipe.setMaxTradeCount(current + 1);
+                    player.sendMessage("§a兑换次数增加1次，现在是 " + recipe.getMaxTradeCount() + " 次");
+                }
+            }
+            
+            // 重新打开编辑器
+            openEditor(player);
+            return;
+        }
+        
+        // 设置次数重置方式按钮
+        if (slot == 51) {
+            event.setCancelled(true);
+            
+            // 先更新当前数据
+            updateRecipeFromInventory(player, recipe, isInputMode);
+            
+            // 切换重置方式
+            boolean currentMode = recipe.isCountResetsWithRefresh();
+            recipe.setCountResetsWithRefresh(!currentMode);
+            
+            if (!currentMode) {
+                player.sendMessage("§a次数重置方式已改为：随刷新重置");
+            } else {
+                player.sendMessage("§a次数重置方式已改为：永久累计");
+            }
+            
+            // 重新打开编辑器
+            openEditor(player);
+            return;
+        }
+        
         // 检查是否是分界线
         int[] borderSlots = {4, 13, 22, 31, 40, 49};
         for (int borderSlot : borderSlots) {
@@ -563,7 +701,7 @@ public class TradeEditorGUI implements Listener {
             }
             
             // 如果是按钮或分界线，取消整个拖动
-            if (slot == 45 || slot == 46 || slot == 47 || slot == 53) {
+            if (slot == 45 || slot == 46 || slot == 47 || slot == 48 || slot == 50 || slot == 51 || slot == 52 || slot == 53) {
                 event.setCancelled(true);
                 return;
             }
@@ -600,7 +738,7 @@ public class TradeEditorGUI implements Listener {
                 }
             }
         } else {
-            for (int i = 0; i < 22; i++) {
+            for (int i = 0; i < 20; i++) {
                 if (getRightSlot(i) == slot) {
                     return true;
                 }
@@ -631,7 +769,7 @@ public class TradeEditorGUI implements Listener {
                 }
             }
         } else {
-            for (int i = 0; i < 22; i++) {
+            for (int i = 0; i < 20; i++) {
                 int slot = getRightSlot(i);
                 if (slot >= 0) {
                     ItemStack item = inventory.getItem(slot);
@@ -758,28 +896,38 @@ public class TradeEditorGUI implements Listener {
         // 在清理之前，先将 GUI 中的物品返回给玩家
         Inventory topInventory = event.getInventory();
         
-        // 收集所有物品槽位的物品
+        // 收集所有**有效物品槽位**的物品（排除按钮和分界线）
         List<ItemStack> itemsToReturn = new ArrayList<>();
         
-        // 左侧物品槽
-        for (int i = 0; i < 20; i++) {
-            int slot = getLeftSlot(i);
-            if (slot >= 0) {
-                ItemStack item = topInventory.getItem(slot);
-                if (item != null && item.getType() != Material.AIR) {
-                    itemsToReturn.add(item);
-                }
-            }
-        }
+        // 定义需要排除的槽位（按钮和分界线）
+        Set<Integer> excludedSlots = new HashSet<>();
+        // 按钮槽位
+        excludedSlots.add(45); // 确认
+        excludedSlots.add(46); // 切换侧
+        excludedSlots.add(47); // 刷新类型
+        excludedSlots.add(48); // 设置标题
+        excludedSlots.add(50); // 设置次数
+        excludedSlots.add(51); // 设置重置方式
+        excludedSlots.add(52); // 设置提示
+        excludedSlots.add(53); // 删除
+        // 分界线槽位
+        excludedSlots.add(4);
+        excludedSlots.add(13);
+        excludedSlots.add(22);
+        excludedSlots.add(31);
+        excludedSlots.add(40);
+        excludedSlots.add(49);
         
-        // 右侧物品槽
-        for (int i = 0; i < 22; i++) {
-            int slot = getRightSlot(i);
-            if (slot >= 0) {
-                ItemStack item = topInventory.getItem(slot);
-                if (item != null && item.getType() != Material.AIR) {
-                    itemsToReturn.add(item);
-                }
+        // 遍历整个 inventory，只收集有效物品槽位的物品
+        for (int slot = 0; slot < topInventory.getSize(); slot++) {
+            // 跳过排除的槽位
+            if (excludedSlots.contains(slot)) {
+                continue;
+            }
+            
+            ItemStack item = topInventory.getItem(slot);
+            if (item != null && item.getType() != Material.AIR) {
+                itemsToReturn.add(item);
             }
         }
         
@@ -790,7 +938,7 @@ public class TradeEditorGUI implements Listener {
         
         // 通知玩家
         if (!itemsToReturn.isEmpty()) {
-            player.sendMessage("§e编辑器已关闭，物品已返回背包");
+            player.sendMessage("§e编辑器已关闭，" + itemsToReturn.size() + " 个物品已返回背包");
         }
         
         // 清理编辑状态
