@@ -412,7 +412,7 @@ public class TradeGUI implements Listener {
     }
     
     /**
-     * 检查玩家是否有足够的物品（包含 NBT 检查）
+     * 检查玩家是否有足够的物品（包含 NBT 等检查）
      */
     private boolean hasRequiredItems(Player player, List<ItemStackData> requiredItems) {
         plugin.getLogger().info("[DEBUG] 开始检查物品，需要 " + requiredItems.size() + " 种物品");
