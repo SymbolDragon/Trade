@@ -17,6 +17,8 @@ public class TradeRecipe {
     private long refreshInterval; // 刷新间隔（秒，仅用于CUSTOM类型）
     private String tradeTitle; // 交易界面标题（可选，默认为"§6交易系统"）
     private String tradeSuccessMessage; // 交易成功提示（可选，默认为"§a交易成功！"）
+    private int maxTradeCount; // 最大兑换次数（0表示无限制）
+    private boolean countResetsWithRefresh; // 次数是否随刷新重置
     
     public enum RefreshType {
         DAILY,      // 每天0点刷新
@@ -33,6 +35,8 @@ public class TradeRecipe {
         this.refreshInterval = 0;
         this.tradeTitle = "§6交易系统"; // 默认标题
         this.tradeSuccessMessage = "§a交易成功！"; // 默认提示
+        this.maxTradeCount = 0; // 默认无限制
+        this.countResetsWithRefresh = true; // 默认随刷新重置
     }
     
     public TradeRecipe(String id) {
@@ -94,6 +98,15 @@ public class TradeRecipe {
             recipe.tradeSuccessMessage = config.getString("trade_success_message", "§a交易成功！");
         }
         
+        // 加载次数限制设置
+        if (config.contains("max_trade_count")) {
+            recipe.maxTradeCount = config.getInt("max_trade_count", 0);
+        }
+        
+        if (config.contains("count_resets_with_refresh")) {
+            recipe.countResetsWithRefresh = config.getBoolean("count_resets_with_refresh", true);
+        }
+        
         return recipe;
     }
     
@@ -134,6 +147,12 @@ public class TradeRecipe {
             config.set("trade_success_message", tradeSuccessMessage);
         }
         
+        // 保存次数限制设置（仅在非默认值时保存）
+        if (maxTradeCount > 0) {
+            config.set("max_trade_count", maxTradeCount);
+            config.set("count_resets_with_refresh", countResetsWithRefresh);
+        }
+        
         return config;
     }
     
@@ -158,4 +177,10 @@ public class TradeRecipe {
     
     public String getTradeSuccessMessage() { return tradeSuccessMessage; }
     public void setTradeSuccessMessage(String tradeSuccessMessage) { this.tradeSuccessMessage = tradeSuccessMessage; }
+    
+    public int getMaxTradeCount() { return maxTradeCount; }
+    public void setMaxTradeCount(int maxTradeCount) { this.maxTradeCount = maxTradeCount; }
+    
+    public boolean isCountResetsWithRefresh() { return countResetsWithRefresh; }
+    public void setCountResetsWithRefresh(boolean countResetsWithRefresh) { this.countResetsWithRefresh = countResetsWithRefresh; }
 }
