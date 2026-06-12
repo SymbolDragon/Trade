@@ -171,6 +171,9 @@ output:
 refresh:
   type: DAILY  # NONE, DAILY, WEEKLY, MONTHLY, CUSTOM
   interval: 3600  # 仅在 type=CUSTOM 时使用，单位：秒
+max_trade_count: 3                    # 总共只能兑换3次
+count_resets_with_refresh: false      # 不重置，永久累计
+
 ```
 
 ### 字段说明
