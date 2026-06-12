@@ -2,7 +2,7 @@
 
 一个功能强大的 Minecraft 1.21.x Paper 服务器交易插件，支持自定义物品兑换、NBT 数据完整保留、在线编辑等功能。
 
-## ✨ 核心特性
+## ✨ 插件功能
 
 ### 1. **完整的 NBT 数据支持**
 - ✅ 完美保留 MythicMobs、MMOItems、ItemsAdder 等插件的自定义物品
