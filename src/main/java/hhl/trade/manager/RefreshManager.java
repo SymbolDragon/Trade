@@ -24,10 +24,14 @@ public class RefreshManager {
     // 玩家ID -> 配方ID -> 上次交易时间戳
     private Map<UUID, Map<String, Long>> playerCooldowns;
     
+    // 玩家ID -> 配方ID -> 已兑换次数
+    private Map<UUID, Map<String, Integer>> playerTradeCounts;
+    
     public RefreshManager(Trade plugin) {
         this.plugin = plugin;
         this.cooldownFile = new File(plugin.getDataFolder(), "cooldowns.yml");
         this.playerCooldowns = new HashMap<>();
+        this.playerTradeCounts = new HashMap<>();
         
         loadCooldowns();
     }
@@ -55,7 +59,17 @@ public class RefreshManager {
             ConfigurationSection section = cooldownConfig.getConfigurationSection(uuidStr);
             if (section != null) {
                 for (String recipeId : section.getKeys(false)) {
-                    recipeCooldowns.put(recipeId, section.getLong(recipeId));
+                    // 加载时间戳
+                    if (recipeId.endsWith("_time")) {
+                        String realRecipeId = recipeId.replace("_time", "");
+                        recipeCooldowns.put(realRecipeId, section.getLong(recipeId));
+                    }
+                    // 加载次数
+                    else if (recipeId.endsWith("_count")) {
+                        String realRecipeId = recipeId.replace("_count", "");
+                        playerTradeCounts.computeIfAbsent(uuid, k -> new HashMap<>())
+                                        .put(realRecipeId, section.getInt(recipeId));
+                    }
                 }
             }
             
@@ -70,9 +84,20 @@ public class RefreshManager {
         cooldownConfig = new YamlConfiguration();
         
         for (Map.Entry<UUID, Map<String, Long>> entry : playerCooldowns.entrySet()) {
-            String uuidStr = entry.getKey().toString();
+            UUID uuid = entry.getKey();
+            String uuidStr = uuid.toString();
+            
+            // 保存时间戳
             for (Map.Entry<String, Long> cooldownEntry : entry.getValue().entrySet()) {
-                cooldownConfig.set(uuidStr + "." + cooldownEntry.getKey(), cooldownEntry.getValue());
+                cooldownConfig.set(uuidStr + "." + cooldownEntry.getKey() + "_time", cooldownEntry.getValue());
+            }
+            
+            // 保存次数
+            Map<String, Integer> counts = playerTradeCounts.get(uuid);
+            if (counts != null) {
+                for (Map.Entry<String, Integer> countEntry : counts.entrySet()) {
+                    cooldownConfig.set(uuidStr + "." + countEntry.getKey() + "_count", countEntry.getValue());
+                }
             }
         }
         
@@ -88,19 +113,33 @@ public class RefreshManager {
      * 检查是否可以交易
      */
     public boolean canTrade(UUID playerId, TradeRecipe recipe) {
-        if (recipe.getRefreshType() == TradeRecipe.RefreshType.NONE) {
-            return true;
+        // 检查时间限制
+        if (recipe.getRefreshType() != TradeRecipe.RefreshType.NONE) {
+            Map<String, Long> playerRecipes = playerCooldowns.get(playerId);
+            if (playerRecipes != null && playerRecipes.containsKey(recipe.getId())) {
+                long lastTradeTime = playerRecipes.get(recipe.getId());
+                long now = System.currentTimeMillis();
+                
+                if (getNextRefreshTime(recipe, lastTradeTime) > now) {
+                    return false; // 还在冷却中
+                }
+                
+                // 如果已刷新，重置次数
+                if (recipe.isCountResetsWithRefresh()) {
+                    resetTradeCount(playerId, recipe.getId());
+                }
+            }
         }
         
-        Map<String, Long> playerRecipes = playerCooldowns.get(playerId);
-        if (playerRecipes == null || !playerRecipes.containsKey(recipe.getId())) {
-            return true;
+        // 检查次数限制
+        if (recipe.getMaxTradeCount() > 0) {
+            int currentCount = getTradeCount(playerId, recipe.getId());
+            if (currentCount >= recipe.getMaxTradeCount()) {
+                return false; // 次数已用完
+            }
         }
         
-        long lastTradeTime = playerRecipes.get(recipe.getId());
-        long now = System.currentTimeMillis();
-        
-        return getNextRefreshTime(recipe, lastTradeTime) <= now;
+        return true;
     }
     
     /**
@@ -109,6 +148,43 @@ public class RefreshManager {
     public void recordTrade(UUID playerId, String recipeId) {
         playerCooldowns.computeIfAbsent(playerId, k -> new HashMap<>())
                       .put(recipeId, System.currentTimeMillis());
+        
+        // 增加兑换次数
+        Map<String, Integer> counts = playerTradeCounts.computeIfAbsent(playerId, k -> new HashMap<>());
+        counts.merge(recipeId, 1, Integer::sum);
+    }
+    
+    /**
+     * 获取当前兑换次数
+     */
+    public int getTradeCount(UUID playerId, String recipeId) {
+        Map<String, Integer> counts = playerTradeCounts.get(playerId);
+        if (counts == null) {
+            return 0;
+        }
+        return counts.getOrDefault(recipeId, 0);
+    }
+    
+    /**
+     * 重置兑换次数
+     */
+    public void resetTradeCount(UUID playerId, String recipeId) {
+        Map<String, Integer> counts = playerTradeCounts.get(playerId);
+        if (counts != null) {
+            counts.remove(recipeId);
+        }
+    }
+    
+    /**
+     * 获取剩余兑换次数
+     */
+    public int getRemainingTradeCount(UUID playerId, TradeRecipe recipe) {
+        if (recipe.getMaxTradeCount() <= 0) {
+            return -1; // 无限制
+        }
+        
+        int currentCount = getTradeCount(playerId, recipe.getId());
+        return Math.max(0, recipe.getMaxTradeCount() - currentCount);
     }
     
     /**
