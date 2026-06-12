@@ -91,7 +91,7 @@ public class TradeGUI implements Listener {
         fillItems(inventory, recipe.getOutputItems(), false);
         
         // 确认交易按钮
-        inventory.setItem(49, createTradeButton(recipe));
+        inventory.setItem(49, createTradeButton(player, recipe));
         
         player.openInventory(inventory);
     }
@@ -211,6 +211,16 @@ public class TradeGUI implements Listener {
                     break;
             }
             
+            // 显示次数限制
+            if (recipe.getMaxTradeCount() > 0) {
+                lore.add("§d次数限制: §e" + recipe.getMaxTradeCount() + "次");
+                if (recipe.isCountResetsWithRefresh()) {
+                    lore.add("§7（随刷新重置）");
+                } else {
+                    lore.add("§7（永久累计）");
+                }
+            }
+            
             lore.add("");
             lore.add("§7点击查看详情");
             
@@ -223,12 +233,29 @@ public class TradeGUI implements Listener {
     /**
      * 创建交易按钮
      */
-    private ItemStack createTradeButton(TradeRecipe recipe) {
+    private ItemStack createTradeButton(Player player, TradeRecipe recipe) {
         Material material = Material.LIME_CONCRETE;
         String status = "§a§l点击交易";
         
         // 检查冷却
-        // TODO: 需要从事件中获取玩家，这里先返回默认状态
+        if (!refreshManager.canTrade(player.getUniqueId(), recipe)) {
+            material = Material.RED_CONCRETE;
+            long remainingSeconds = refreshManager.getRemainingCooldownSeconds(player.getUniqueId(), recipe);
+            status = "§c§l冷却中: " + formatTime(remainingSeconds);
+        }
+        
+        // 检查次数限制
+        int maxCount = recipe.getMaxTradeCount();
+        if (maxCount > 0) {
+            int currentCount = refreshManager.getTradeCount(player.getUniqueId(), recipe.getId());
+            int remainingCount = maxCount - currentCount;
+            if (remainingCount <= 0) {
+                material = Material.GRAY_CONCRETE;
+                status = "§7§l次数已用完";
+            } else {
+                status = "§a§l点击交易（剩余" + remainingCount + "次）";
+            }
+        }
         
         ItemStack item = new ItemStack(material);
         ItemMeta meta = item.getItemMeta();
@@ -239,6 +266,18 @@ public class TradeGUI implements Listener {
             lore.add("§7输入: §f" + recipe.getInputItems().size() + " 个物品");
             lore.add("§7输出: §f" + recipe.getOutputItems().size() + " 个物品");
             lore.add("");
+            
+            // 显示次数信息
+            if (maxCount > 0) {
+                int currentCount = refreshManager.getTradeCount(player.getUniqueId(), recipe.getId());
+                lore.add("§d兑换次数: §e" + currentCount + "/" + maxCount);
+                if (recipe.isCountResetsWithRefresh()) {
+                    lore.add("§7（随刷新重置）");
+                } else {
+                    lore.add("§7（永久累计）");
+                }
+                lore.add("");
+            }
             
             if (recipe.getRefreshType() != TradeRecipe.RefreshType.NONE) {
                 lore.add("§c注意: 此交易有冷却时间");
@@ -340,6 +379,17 @@ public class TradeGUI implements Listener {
             return;
         }
         
+        // 检查兑换次数限制
+        int maxCount = recipe.getMaxTradeCount();
+        if (maxCount > 0) {
+            int currentCount = refreshManager.getTradeCount(player.getUniqueId(), recipe.getId());
+            int remainingCount = maxCount - currentCount;
+            if (remainingCount <= 0) {
+                player.sendMessage("§c此配方的兑换次数已用完！（" + currentCount + "/" + maxCount + "）");
+                return;
+            }
+        }
+        
         // 检查玩家是否有足够的输入物品
         if (!hasRequiredItems(player, recipe.getInputItems())) {
             player.sendMessage("§c你没有足够的物品进行交易！");
@@ -365,6 +415,8 @@ public class TradeGUI implements Listener {
      * 检查玩家是否有足够的物品（包含 NBT 检查）
      */
     private boolean hasRequiredItems(Player player, List<ItemStackData> requiredItems) {
+        plugin.getLogger().info("[DEBUG] 开始检查物品，需要 " + requiredItems.size() + " 种物品");
+        
         // 创建玩家背包中所有物品的副本
         List<ItemStack> playerItems = new ArrayList<>();
         for (ItemStack item : player.getInventory().getContents()) {
@@ -373,12 +425,22 @@ public class TradeGUI implements Listener {
             }
         }
         
+        plugin.getLogger().info("[DEBUG] 玩家背包中有 " + playerItems.size() + " 个非空物品槽");
+        
         // 对每个需要的物品，尝试在玩家背包中查找匹配的物品
-        for (ItemStackData requiredData : requiredItems) {
+        for (int i = 0; i < requiredItems.size(); i++) {
+            ItemStackData requiredData = requiredItems.get(i);
             ItemStack requiredItem = requiredData.toItemStack();
-            if (requiredItem == null) continue;
+            if (requiredItem == null) {
+                plugin.getLogger().info("[DEBUG] 物品#" + i + " 转换为 null，跳过");
+                continue;
+            }
+            
+            plugin.getLogger().info("[DEBUG] 检查物品#" + i + ": " + requiredItem.getType() + " x" + requiredItem.getAmount());
+            plugin.getLogger().info("[DEBUG] 需要的 NBT: " + (requiredData.getNbtData() != null ? "有(" + requiredData.getNbtData().length() + "字符)" : "无"));
             
             int remainingAmount = requiredItem.getAmount();
+            int matchedCount = 0;
             
             // 遍历玩家背包，查找匹配的物品
             Iterator<ItemStack> iterator = playerItems.iterator();
@@ -391,12 +453,17 @@ public class TradeGUI implements Listener {
                 }
                 
                 // 检查 NBT 数据是否匹配
-                if (!isItemMatch(playerItem, requiredItem)) {
+                boolean match = isItemMatch(playerItem, requiredItem);
+                if (!match) {
+                    plugin.getLogger().info("[DEBUG]   - 物品不匹配 (材质: " + playerItem.getType() + ", 数量: " + playerItem.getAmount() + ")");
                     continue;
                 }
                 
+                plugin.getLogger().info("[DEBUG]   - 找到匹配物品: " + playerItem.getType() + " x" + playerItem.getAmount());
+                
                 // 物品匹配，扣除数量
                 int playerAmount = playerItem.getAmount();
+                matchedCount += playerAmount;
                 if (playerAmount <= remainingAmount) {
                     remainingAmount -= playerAmount;
                     iterator.remove(); // 移除已使用的物品
@@ -406,12 +473,16 @@ public class TradeGUI implements Listener {
                 }
             }
             
+            plugin.getLogger().info("[DEBUG] 物品#" + i + " 匹配结果: 需要" + requiredItem.getAmount() + ", 找到" + matchedCount + ", 剩余需求" + remainingAmount);
+            
             // 如果还有剩余需求，说明物品不足
             if (remainingAmount > 0) {
+                plugin.getLogger().warning("[DEBUG] 物品不足！需要 " + requiredItem.getAmount() + " 个 " + requiredItem.getType() + "，但只找到 " + matchedCount + " 个");
                 return false;
             }
         }
         
+        plugin.getLogger().info("[DEBUG] 所有物品检查通过！");
         return true;
     }
     
@@ -421,6 +492,7 @@ public class TradeGUI implements Listener {
     private boolean isItemMatch(ItemStack playerItem, ItemStack requiredItem) {
         // 材质必须相同
         if (playerItem.getType() != requiredItem.getType()) {
+            plugin.getLogger().info("[DEBUG]     isItemMatch: 材质不匹配 (玩家: " + playerItem.getType() + ", 需要: " + requiredItem.getType() + ")");
             return false;
         }
         
@@ -432,17 +504,119 @@ public class TradeGUI implements Listener {
         String playerNbt = playerData.getNbtData();
         String requiredNbt = requiredData.getNbtData();
         
-        // 如果要求的物品有 NBT 数据，必须完全匹配
+        plugin.getLogger().info("[DEBUG]     isItemMatch: 材质相同=" + playerItem.getType());
+        plugin.getLogger().info("[DEBUG]     isItemMatch: 玩家NBT=" + (playerNbt != null ? "有(" + playerNbt.length() + "字符)" : "无"));
+        plugin.getLogger().info("[DEBUG]     isItemMatch: 需要NBT=" + (requiredNbt != null ? "有(" + requiredNbt.length() + "字符)" : "无"));
+        
+        // 如果要求的物品有 NBT 数据，需要更智能的对比
         if (requiredNbt != null && !requiredNbt.isEmpty()) {
-            return requiredNbt.equals(playerNbt);
+            // 反序列化两个物品进行实际对比
+            ItemStack requiredDeserialized = requiredData.toItemStack();
+            ItemStack playerDeserialized = playerData.toItemStack();
+            
+            if (requiredDeserialized == null || playerDeserialized == null) {
+                plugin.getLogger().warning("[DEBUG]     isItemMatch: 反序列化失败");
+                return false;
+            }
+            
+            // 对比关键属性
+            boolean match = compareItemsStrictly(requiredDeserialized, playerDeserialized);
+            plugin.getLogger().info("[DEBUG]     isItemMatch: NBT严格对比结果=" + match);
+            return match;
         }
         
-        // 如果要求的物品没有 NBT 数据，则玩家物品也不应该有
-        if (playerNbt != null && !playerNbt.isEmpty()) {
+        // 如果要求的物品没有 NBT 数据，则玩家的物品可以是任何状态
+        // （有 NBT 或没有 NBT 都可以，只要材质相同）
+        plugin.getLogger().info("[DEBUG]     isItemMatch: 无需NBT检查，返回true");
+        return true;
+    }
+    
+    /**
+     * 严格对比两个物品的所有属性
+     */
+    private boolean compareItemsStrictly(ItemStack item1, ItemStack item2) {
+        // 材质必须相同
+        if (item1.getType() != item2.getType()) {
             return false;
         }
         
-        // 都没有 NBT 数据，材质相同即可
+        ItemMeta meta1 = item1.getItemMeta();
+        ItemMeta meta2 = item2.getItemMeta();
+        
+        // 如果都没有 Meta，认为相同
+        if (meta1 == null && meta2 == null) {
+            return true;
+        }
+        
+        // 如果一个有 Meta 一个没有，不同
+        if (meta1 == null || meta2 == null) {
+            return false;
+        }
+        
+        // 对比显示名称
+        boolean nameMatch = Objects.equals(meta1.getDisplayName(), meta2.getDisplayName());
+        if (!nameMatch) {
+            plugin.getLogger().info("[DEBUG]       - 名称不匹配");
+            return false;
+        }
+        
+        // 对比 Lore
+        boolean loreMatch = Objects.equals(meta1.getLore(), meta2.getLore());
+        if (!loreMatch) {
+            plugin.getLogger().info("[DEBUG]       - Lore不匹配");
+            return false;
+        }
+        
+        // 对比附魔
+        boolean enchantsMatch = meta1.getEnchants().equals(meta2.getEnchants());
+        if (!enchantsMatch) {
+            plugin.getLogger().info("[DEBUG]       - 附魔不匹配");
+            return false;
+        }
+        
+        // 对比不可破坏
+        if (meta1.isUnbreakable() != meta2.isUnbreakable()) {
+            plugin.getLogger().info("[DEBUG]       - 不可破坏属性不匹配");
+            return false;
+        }
+        
+        // 对比亚自定义模型数据
+        if (meta1.hasCustomModelData() != meta2.hasCustomModelData()) {
+            plugin.getLogger().info("[DEBUG]       - 自定义模型数据存在性不匹配");
+            return false;
+        }
+        
+        if (meta1.hasCustomModelData() && meta2.hasCustomModelData()) {
+            if (meta1.getCustomModelData() != meta2.getCustomModelData()) {
+                plugin.getLogger().info("[DEBUG]       - 自定义模型数据值不匹配");
+                return false;
+            }
+        }
+        
+        // 尝试对比 PersistentDataContainer（MythicMobs 等插件使用）
+        try {
+            org.bukkit.persistence.PersistentDataContainer pdc1 = meta1.getPersistentDataContainer();
+            org.bukkit.persistence.PersistentDataContainer pdc2 = meta2.getPersistentDataContainer();
+            
+            // 对比 PDC 的 keys
+            Set<org.bukkit.NamespacedKey> keys1 = pdc1.getKeys();
+            Set<org.bukkit.NamespacedKey> keys2 = pdc2.getKeys();
+            
+            if (!keys1.equals(keys2)) {
+                plugin.getLogger().info("[DEBUG]       - PDC keys不匹配");
+                return false;
+            }
+            
+            // 对比每个 key 的值
+            for (org.bukkit.NamespacedKey key : keys1) {
+                // 简单对比：如果都有这个 key，认为匹配
+                // 更严格的对比需要检查值的类型和内容
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("[DEBUG]       - PDC对比失败: " + e.getMessage());
+        }
+        
+        plugin.getLogger().info("[DEBUG]       - 所有属性匹配成功");
         return true;
     }
     
